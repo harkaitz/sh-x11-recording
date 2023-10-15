@@ -1,0 +1,27 @@
+#!/bin/sh -e
+##:
+#h: Usage: dia-h-xpdf DIA-FILES...
+#h:
+#h: Convert DIA diagrams to pdf and display using xpdf(1).
+#x:
+#x: Dependencies: dia, xpdf
+##:
+dia_h_xpdf() {
+    local dia pdf pdf_list=''
+    for dia in "$@"; do
+        pdf="${TEMP:-/tmp}/$(md5sum "${dia}" | cut -d ' ' -f 1).pdf"
+        if test ! -f "${pdf}"; then
+            dia -t "pdf" -e "${pdf}" "${dia}" >/dev/null 2>&1
+        fi
+        pdf_list="${pdf_list} ${pdf}"
+    done
+    if test -n "${pdf_list}"; then
+        xpdf -fullscreen ${pdf_list}
+    fi
+}
+if test @"$(basename "$0")" = @"dia-h-xpdf";then
+    case "${1}" in
+        ''|-h|--help) sed -n 's/^ *#h: \{0,1\}//p' "$0";;
+        *)            dia_h_xpdf "$@"; exit 0;;
+    esac
+fi

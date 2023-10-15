@@ -1,0 +1,106 @@
+#!/bin/sh -e
+##:
+#h: Usage: pulse-h ...
+#h:
+#h: Helper script to select audio sinks and sources.
+#h:
+#h:   -lI : List audio sources.  -tI : Test audio sources.
+#h:   -lO : List audio sinks.    -tO : Test audio sinks.
+#h:   
+#h:   -sI SRC : Set preferred pulse source.
+#h:   -cI     : Check the preferred pulse source is available.
+#h:   -gI     : Print preferred pulse source.
+#h:
+#h: Files: ~/.config/preferred_pulse_source
+#h: Dependencies: mpv, ffmpeg, pulseaudio, normalize-audio
+##:
+pulse_h() {
+    local OPTIND optopt= ops=
+    
+    ## Parse command line arguments.
+    while getopts "lscgtIO" optopt; do
+        ops="${ops}${optopt}"
+        case $optopt in
+            \?) return 1;;
+        esac
+    done
+    shift $(( $OPTIND - 1 ))
+    
+    ## Outputs (general).
+    case "${ops}" in *l*O*) pulse_h_list_sinks ;; esac
+    case "${ops}" in *t*O*) pulse_h_test_sinks ;; esac
+    ## Inputs (general).
+    case "${ops}" in *l*I*) pulse_h_list_sources                     ;; esac
+    case "${ops}" in *t*I*) pulse_h_test_sources                     ;; esac
+    case "${ops}" in *s*I*) pulse_h_set_preferred_source "$1"; shift ;; esac
+    case "${ops}" in *c*I*) pulse_h_chk_preferred_source             ;; esac
+    case "${ops}" in *g*I*) pulse_h_get_preferred_source             ;; esac
+}
+## -------------------------------------------------------------------
+pulse_h_list_sources() {
+    pacmd list-sources | sed -n 's|^\s*name: *<\(.*\)>|\1|p' | sed '/alsa_output/d'
+}
+pulse_h_list_sinks() {
+    pacmd list-sinks | sed -n 's|^\s*name: *<\(.*\)>|\1|p'
+}
+## -------------------------------------------------------------------
+pulse_h_get_preferred_source() {
+    if test -f ~/.config/preferred_pulse_source; then
+        cat ~/.config/preferred_pulse_source
+    fi
+}
+pulse_h_chk_preferred_source() {
+    local src="$(pulse_h_get_preferred_source)"
+    if test ! -n "${src}"; then
+        echo >&2 "error: No preferred source configured."
+        return 1
+    fi
+    src="$(pulse_h_list_sources | grep -xF "${src}" || true)"
+    if test ! -n "${src}"; then
+        echo >&2 "error: The preferred source is not available."
+        return 1
+    fi
+}
+pulse_h_set_preferred_source() {
+    if test ! -n "$1"; then
+        echo >&2 "error: Please specify a source."
+        return 1
+    fi
+    echo "Setting preferred source to ${1} ..."
+    mkdir -p ~/.config
+    echo "$1" > ~/.config/preferred_pulse_source
+}
+## -------------------------------------------------------------------
+pulse_h_test_sinks() {
+    local sink
+    rm -f /tmp/test.wav
+    ffmpeg -loglevel error \
+           -f lavfi \
+           -i "sine=frequency=1000:sample_rate=48000:duration=1" \
+           /tmp/test.wav
+    for sink in ${1:-$(pulse_h_list_sinks) ''}; do
+        echo "[${sink:-default}]"
+        mpv --really-quiet --ao=pulse --audio-device="pulse/${sink}" /tmp/test.wav
+    done
+}
+pulse_h_test_sources() {
+    local wav1="$(mktemp -u).wav" wav2="$(mktemp -u).wav" ign
+    for src in ${1:-$(pulse_h_list_sources)}; do
+        echo "[${src:-default}] (Type enter to record)"; read ign
+        rm -f "${wav1}" "${wav2}"
+        ffmpeg -loglevel error -f pulse ${src:+ -i "${src}" } -t 00:00:04  "${wav1}"
+        if normalize-audio -b "${wav1}" >/dev/null 2>&1; then
+            sox "${wav1}" -n        noiseprof /tmp/noise
+            sox "${wav1}" "${wav2}" noisered  /tmp/noise 0.20
+            mpv "${wav2}"
+        fi
+    done
+    rm -f "${wav1}" "${wav2}"
+}
+## -------------------------------------------------------------------
+if test @"$(basename "$0")" = @"pulse-h";then
+    case "${1}" in
+        ''|-h|--help) sed -n 's/^ *#h: \{0,1\}//p' "$0" ;;
+        *)            pulse_h "$@"; exit 0;;
+    esac
+fi

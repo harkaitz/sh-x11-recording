@@ -1,0 +1,113 @@
+#!/bin/sh -e
+##:
+#h: Usage: xrec-start [-V]
+#h:
+#h: Start virtual desktop with the settings in "XREC", "../XRECP", "/etc/XREC".
+#h:
+#h:   1. Create a directory in "/w".
+#h:   2. Copy files in STARTUPDIR to "/w".
+#h:   2. Launch a Xephyr session in ":1" with size SCREENSIZE.
+#h:   3. Launch "i3(1)" as the window manager in ":".
+#h:   4. If "WALLPAPER" set, will set it with "feh(1)".
+#h:   5. If "KEYBOARD" set, will set it with "setxkbmap".
+#h:
+#h: Dependencies: Xephyr, i3, feh, setxkbmap
+##:
+xrec_start() {
+    local pwd="$(pwd)" i3cfg title= USE_TERMINAL_TITLE=
+    mkdir -p ~/.log
+    xrec_start_check_programs
+    
+    ## Create working directory.
+    sudo rm -rf /w
+    sudo mkdir -p /w
+    sudo chown "$(whoami):$(whoami)" /w
+    
+    ## Copy startup files.
+    if test -n "${STARTUPDIR}"; then
+        tar cf - -C "${STARTUPDIR}" . | tar xf - -C /w
+    fi
+    
+    ## Start log.
+    date > ~/.log/xrec-start.log
+    
+    ## Launch virtual desktop.
+    Xephyr -ac                     \
+           -screen "${SCREENSIZE}" \
+           -br                     \
+           -reset                  \
+           -terminate ":1"         \
+           >> ~/.log/xrec-start.log 2>&1 &
+    sleep 1
+    
+    ## Configure i3.
+    sed '/status_command/d;s|Mod1|Mod4|g' /etc/i3/config > ~/.i3-config-tutorial
+
+    ## Calculate title.
+    if test -n "${TITLE_PREFIX}" && test -n "${TITLE}"; then
+        USE_TERMINAL_TITLE="${TITLE_PREFIX} - ${TITLE}"
+    elif test -n "${TITLE_PREFIX}"; then
+        USE_TERMINAL_TITLE="${TITLE_PREFIX}"
+    elif test -n "${TITLE}"; then
+        USE_TERMINAL_TITLE="${TITLE}"
+    fi
+    
+    ## Launch the desktop manager.
+    cd "/w"
+    env DISPLAY=":1"         \
+        USE_SHORT_PROMPT="y" \
+        USE_TERMINAL_TITLE="${USE_TERMINAL_TITLE}" \
+        i3                       \
+        -a                       \
+        -c ~/.i3-config-tutorial \
+        >> ~/.log/xrec-start.log 2>&1 &
+    cd "${pwd}"
+    sleep 1
+    
+    ## Draw the wallpaper.
+    if test -n "${WALLPAPER}"; then
+        DISPLAY=":1" feh --bg-scale "${WALLPAPER}" >> ~/.log/xrec-start.log 2>&1
+    fi
+    
+    ## Set keyboard.
+    if test -n "${KEYBOARD}"; then
+        setxkbmap "${KEYBOARD}" >> ~/.log/xrec-start.log 2>&1
+    fi
+}
+xrec_start_show_variables() {
+    echo "WALLPAPER  : ${WALLPAPER}"
+    echo "KEYBOARD   : ${KEYBOARD}"
+    echo "SCREENSIZE : ${SCREENSIZE}"
+}
+xrec_start_calc_variables() {
+    local pwd="$(pwd)"
+    if test -f ./XREC    ; then        . ./XREC                 ; fi
+    if test -f ../XRECP  ; then cd ..; . ./XRECP;    cd "${pwd}"; fi
+    if test -f /etc/XREC ; then        . /etc/XREC              ; fi
+    : "${SCREENSIZE:=612x375}"
+}
+xrec_start_check_programs() {
+    local ret=0
+    if ! which Xephyr >/dev/null 2>&1; then
+        echo >&2 "error: Please install Xephyr."; ret=1
+    fi
+    if ! which i3 >/dev/null 2>&1; then
+        echo >&2 "error: Please install i3."; ret=1
+    fi
+    if ! which feh >/dev/null 2>&1; then
+        echo >&2 "error: Please install feh."; ret=1
+    fi
+    if ! which setxkbmap >/dev/null 2>&1; then
+        echo >&2 "error: Please install x11-xkb-utils."; ret=1
+    fi
+    return "$ret"
+}
+## -------------------------------------------------------------------
+xrec_start_calc_variables
+if test @"$(basename "$0")" = @"xrec-start";then
+    case "${1}" in
+        -h|--help) sed -n 's/^ *#h: \{0,1\}//p' "$0" ;;
+        -V)        xrec_start_show_variables         ;;
+        *)         xrec_start "$@"; exit 0;;
+    esac
+fi
